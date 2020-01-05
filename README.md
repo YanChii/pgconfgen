@@ -1,6 +1,9 @@
 # pgconfgen
-Wait for trigger, update local files, reload, repeat.
+Wait for db trigger, update local files, call reload, repeat.
 
+This program can keep up to date multiple files according to the defined sql query. The sql query parameters can be specified in the ini file separately for each output file. Moreover, final file is generated using jinja2 templating to give you the most flexibility possible. If the output file has changed, `pgconfgen` can call `reload_command` (defined per output file) to do anything neccessary to apply the change.
+
+For more information, see also commented ini file `pgconfgen-sample.ini`.
 
 
 ## Example use case: 
@@ -10,9 +13,9 @@ Wait for trigger, update local files, reload, repeat.
 
 **Solution**: Point `pgconfgen` to the powerdns database and let it watch for changes in `domains` table. As soon as the change is detected, regenerate the config file and call `rec_control reload-zones`.
 
-**Bonus objective**: create two more tables: `cfg_pdns` and `cfg_recursor` which can be used to remotely configure any PowerDNS configuration parameters without touching the actual server. Very handy in cooperation with some administration backend that can do a GUI for you.
+**Bonus objective**: create two more tables: `cfg_pdns` and `cfg_recursor` which can be used to remotely apply any PowerDNS configuration file parameters without touching the actual server. You can have all the configuration in one database.
 
-**Note**: For detecting changes promptly, you have to execute `select pg_notify(...);` after every change. You can do it as a post-save hook in your interface or you can create a DB trigger that will do it for you.
+**Note**: For detecting changes promptly, you have to execute `select pg_notify(...);` after every change. You can do it in a post-save hook in your interface or you can create a DB trigger that will do it for you. If you use a trigger and you change multiple entries at once, it is recommended to change them in a transaction to avoid calling multiple reloads.
 
 Sample `/etc/pgconfgen/pgconfgen.ini`:
 ```
@@ -23,7 +26,7 @@ db_keepalive=900
 notify_channel= pdns_notify
 
 [domains_modified]
-jinja_template = /root/pdns-configd/forward-zones.conf.j2
+jinja_template = /etc/pgconfgen/forward-zones.conf.j2
 outfile  = /etc/recursor.conf.d/forward-zones.conf
 reload_command = /opt/local/bin/rec_control reload-zones | grep -vq failed
 table_name = domains

@@ -117,10 +117,7 @@ def read_config_file():
 
 def end(exitval):
     cleanup()
-    if exitval:
-        logger.warning("Exitting...")
-    else:
-        logger.info("Exitting...")
+    logger.info("Exiting...")
     exit(exitval)
 
 
