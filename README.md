@@ -1,7 +1,7 @@
 # pgconfgen
 Wait for db trigger, update local files, call reload, repeat.
 
-This program can keep up to date multiple files according to the defined sql query. The sql query parameters can be specified in the ini file separately for each output file. Moreover, final file is generated using jinja2 templating to give you the most flexibility possible. If the output file has changed, `pgconfgen` can call `reload_command` (defined per output file) to do anything neccessary to apply the change.
+This program can keep multiple files up to date according to the defined sql query. The sql query parameters can be specified in the ini file separately for each output file. Moreover, final file is generated using jinja2 templating to give you the most flexibility possible. If the output file has changed, `pgconfgen` can call `reload_command` (defined per output file) to do anything neccessary to apply the change.
 
 For more information, see also commented ini file `pgconfgen-sample.ini`.
 
