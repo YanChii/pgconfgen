@@ -1,0 +1,421 @@
+#!/usr/bin/env python3
+# Written by YanChii 2020
+
+import pgpubsub
+import psycopg2
+import psycopg2.extras
+import signal
+import os
+from sys import exit
+from time import sleep
+from filecmp import cmp
+from subprocess import check_call,CalledProcessError
+import logging
+import argparse
+import configparser
+import functools
+import re
+import jinja2
+import jinja2.exceptions
+
+# Default values:
+DEFAULTCFGVALS = {}
+DEFAULTCFGVALS['app_name'] = 'pgconfgen'
+DEFAULTCFGVALS['config'] = '/etc/%s/%s.ini' % (DEFAULTCFGVALS['app_name'], DEFAULTCFGVALS['app_name'])
+DEFAULTCFGVALS['loglevel'] = logging.INFO
+DEFAULTCFGVALS['db_retry_timeout'] = 30
+DEFAULTCFGVALS['db_keepalive'] = 900
+# every update_freq-th keepalive will call also update_everything() (zero disables updates)
+DEFAULTCFGVALS['update_freq'] = 50  # 900*50 = full update every 12.5 hours
+# throw error if these cfg parameters are missing
+DEFAULTCFGVALS['mandatory_cfg_items_main'] = ['db_connstring', 'notify_channel']
+DEFAULTCFGVALS['mandatory_cfg_items_other'] = ['jinja_template', 'outfile', 'table_name', 'table_cols']
+
+# Read cmd line arguments
+parser = argparse.ArgumentParser()
+parser.add_argument('-c', '--config', help='program configuration file (default: ' + DEFAULTCFGVALS['config'] + ')', required=False, default=DEFAULTCFGVALS['config'])
+parser.add_argument('-d', '--debug', help="increase output verbosity", action="store_true")
+cmdline_args = parser.parse_args()
+
+# Global variables
+pubsub = None      # notify handler
+config = {}        # parsed file configuration
+logger = logging.getLogger(DEFAULTCFGVALS['app_name']) # log handler
+callMap = {}
+
+
+def get_conf_item(conf_item, section='main'):
+    '''
+    Returns config value.
+    Order of precedense: cmd line args, config file, default value, fail and exit.
+    '''
+    if conf_item in cmdline_args and vars(cmdline_args)[conf_item] != None:     # None means that argument was not specified in cmd line
+        return vars(cmdline_args)[conf_item]
+    elif config and conf_item in config[section]:
+        return config[section][conf_item]
+    elif conf_item in DEFAULTCFGVALS:
+        return DEFAULTCFGVALS[conf_item]
+    else:
+        logger.critical('Config value "%s" not specified in file %s or in commandline (and no default value available).' % (conf_item, get_conf_item('config')))
+        end(4)
+
+
+def item_is_in_config(conf_item, section='main'):
+    '''
+    Returns true if cfg parameter exists.
+    '''
+    if    ((conf_item in cmdline_args and vars(cmdline_args)[conf_item] != None) or
+            conf_item in config[section] or
+            conf_item in DEFAULTCFGVALS):
+        return True
+    else:
+        return False
+
+
+def verify_cfg_parameter(param, section):
+    '''
+    Throw critical error if mandatory cfg parameter is missing.
+    '''
+    if param not in config[section]:
+        logger.critical("Config file error. Item '%s' not found in (section '%s')." % (item, section))
+        end(5)
+    elif not config[section][param]:
+        logger.critical("Config file error. Item '%s' cannot be empty (section '%s')." % (item, section))
+        end(5)
+
+
+def read_config_file():
+    '''
+    Reads cfg file and checks for consistency.
+    '''
+    global config
+
+    if not os.access(cmdline_args.config, os.R_OK):
+        logger.critical("Config file " + cmdline_args.config + " is not readable!")
+        end(5)
+
+    config = configparser.ConfigParser()
+    config.read(cmdline_args.config)
+    
+    # check for required items in main section
+    for item in DEFAULTCFGVALS['mandatory_cfg_items_main']:
+        verify_cfg_parameter(item, 'main')
+
+    # check for required items in all sections
+    cfgsections = config.sections()
+    cfgsections.remove('main')         # don't look into main section
+    for section in cfgsections:
+        for item in DEFAULTCFGVALS['mandatory_cfg_items_other']:
+            verify_cfg_parameter(item, section)
+
+        # check if jinja template file is present
+        if not os.access(config[section]['jinja_template'], os.R_OK):
+            logger.critical("Jinja template file '%s' does not exist (section '%s')." 
+                    % (config[section]['jinja_template'], section))
+            end(2)
+
+
+def end(exitval):
+    cleanup()
+    if exitval:
+        logger.warning("Exitting...")
+    else:
+        logger.info("Exitting...")
+    exit(exitval)
+
+
+def init_logging():
+    global logger
+    logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S %p')
+    #logging.basicConfig(format='%(message)s')
+    logger = logging.getLogger(get_conf_item('app_name'))
+    # argparse -d is the only way how to turn on debug because cfg file was not yet parsed
+    if get_conf_item('debug'):
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(get_conf_item('loglevel'))
+
+
+def init_signals():
+    '''
+    UNIX signal handling.
+    - Ctrl+c calls cleanup
+    - SIGUSR1 calls reload config file and update_everything()
+    '''
+
+    def ctrl_c(signal, frame):
+        logger.info('Interrupt received.')
+        end(0)
+    signal.signal(signal.SIGINT, ctrl_c)
+    signal.signal(signal.SIGTERM, ctrl_c)
+
+    # signal to force update all (useful e.g. after jinja_template or config file change)
+    def run_update_conf(signum, stack):
+        logger.info('SIGUSR1 received. Forcing reload of everything.')
+        read_config_file()
+        update_everything()
+    signal.signal(signal.SIGUSR1, run_update_conf)
+
+
+def register_notify_handler(section_name):
+    '''
+    Decorator function to register handler function for a config section.
+
+    Usage: 
+    @register_notify_handler('section_name')
+    def the_function():
+       ...
+
+    Or directly by calling:
+    register_notify_handler('section_name')(the_function)
+    
+    Parameter section_name is the string that identifies which notify to handle.
+
+    Using this decorator you can implement your own additional notify handlers
+    that don't need to be defined in the config file.
+    '''
+
+    def decorator_register_notify_handler(func):
+        callMap[section_name] = func
+        logger.debug("Registering handler for section '%s'" % section_name)
+    return decorator_register_notify_handler
+
+
+def call_reload(section):
+    '''
+    Calls a reload command (if) defined for specified cfg section.
+    '''
+    if 'reload_command' not in config[section] or not config[section]['reload_command']:
+        # nothing to reload
+        logger.debug("Reload command is not defined for section '%s'." % section)
+        return 0
+
+    reload_command = config[section]['reload_command']
+    try:
+        logger.debug("Calling reload command: %s" % reload_command)
+        check_call(reload_command, shell=True)
+    except CalledProcessError as e:
+        logger.warning("Reload command failed: %s" % reload_command)
+
+def render_jinja(values, jinjafile):
+    '''
+    Takes dict of values and a path to j2 file.
+    Returns rendered string.
+    '''
+    try:
+        with open(jinjafile, 'r') as f:
+            templatext = f.read()
+
+        t = jinja2.Template(templatext)
+        return t.render(rows=values)
+
+    except IOError as e:
+        logger.critical("Cannot open template file %s (%s)" % (jinjafile, str(e)))
+        end(6)
+    except jinja2.exceptions.TemplateSyntaxError as te:
+        logger.critical('Syntax error in jinja template file %s on line %s: %s' %(jinjafile, te.lineno, str(te)))
+        end(6)
+    except jinja2.exceptions.TemplateError as te:
+        logger.critical('Jinja template render error in file %s: ' % (jinjafile, str(te)))
+        end(6)
+
+
+def template_handler(section):
+    '''
+    This is the default cfg section handler.
+    Makes sql query according to cfg and inserts the results into a jinja templating.
+    Compares the result with the destination file and replaces if necessary.
+    Call reload command if output file has changed.
+    '''
+    outfile = config[section]['outfile']
+    tmpfile = outfile + '.tmp.' + str(os.getpid())
+    jinjafile = config[section]['jinja_template']
+
+    # raise error if conf directory does not exist
+    os.stat(os.path.dirname(outfile))
+
+    try:
+        with pubsub.conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor) as cur:
+            # we have already verified table_name and table_cols
+            sql = "select %s from %s" % (config[section]['table_cols'], config[section]['table_name'])
+            cur.execute(sql)
+
+            values = cur.fetchall()
+            #logger.debug("SQL out: %s" % values)
+            output = render_jinja(values, jinjafile)
+
+            logger.debug("Writing temp file %s" % tmpfile)
+            f = open(tmpfile, 'w')
+            f.write(output)
+            f.close()
+
+            # if the dst file doesn't exist or differs, write dst
+            if not os.access(outfile, os.F_OK) or not cmp(outfile, tmpfile):
+                logger.info("Writing file %s" % outfile)
+                os.replace(src=tmpfile, dst=outfile)
+                call_reload(section)
+            else:
+                logger.debug("File %s is up to date" % outfile)
+                os.remove(tmpfile)
+    except:
+        if os.access(tmpfile, os.W_OK):
+            logger.debug("debug: Removing temp file %s" % tmpfile)
+            os.remove(tmpfile)
+        raise
+
+
+def get_db_table_columns(table_name):
+    with pubsub.conn.cursor() as cur:
+        sql = "SELECT column_name FROM information_schema.columns WHERE table_name = '%s'" % table_name
+        cur.execute(sql)
+        col_list = cur.fetchall()
+    return [x[0] for x in col_list]     # convert to list
+
+
+def verify_sql_tables():
+    '''
+    Check if the tables and column names specified in config file really exist in DB.
+    '''
+    for section in [x for x in config.sections() if x != 'main']: # all except main section
+        table_name = get_conf_item('table_name', section)
+        table_cols = re.split(r" *, *", get_conf_item('table_cols', section))
+        table_cols = {x for x in table_cols if x}    # deduplicate and remove empty entries
+        #logger.debug("Table name: %s; table_row names: %s" % (table_name, table_cols))
+
+        if not table_name:
+            logger.critical("Parameter 'table_name' cannot be empty (section '%s')." % section)
+            end(3)
+        elif not table_cols:
+            logger.critical("Parameter 'table_cols' cannot be empty (section '%s')." % section)
+            end(3)
+
+        db_col_list = get_db_table_columns(table_name)
+
+        if not db_col_list:
+            logger.critical("Table '%s' does not exist (section '%s')." % (table_name, section))
+            end(3)
+
+        for col in table_cols:
+            if col not in db_col_list:
+                logger.info("Discovered table columns: %s" % db_col_list)
+                logger.critical(
+                "Column '%s' does not exist in db table '%s'. Please fix the config section '%s'."
+                % (col, table_name, section))
+                end(3)
+
+
+
+def register_call_map():
+    '''
+    Registers a handler for each cfg file section.
+    '''
+    global callMap
+
+    for section in [x for x in config.sections() if x != 'main']: # all except main section
+        register_notify_handler(section)(template_handler)
+        #callMap[section] = template_handler
+
+    logger.debug("Event channel name is '%s'" % get_conf_item('notify_channel'))
+    return
+
+
+def update_everything():
+    '''
+    Call a handler for every cfg file section. Force update of everything.
+    '''
+    for section in callMap:
+        # run all registered handlers
+        logger.debug("Running handler '%s'" % section)
+        callMap[section](section)
+
+
+def connect():
+    '''
+    Handle db connect and call force update of everything if successfull.
+    '''
+    global pubsub
+    logger.info("Connecting to DB")
+    while True:
+        try:
+            db_connstring = get_conf_item('db_connstring')
+            logger.debug("Connection string: " + db_connstring)
+            pubsub = pgpubsub.connect(db_connstring)
+            pubsub.listen(get_conf_item('notify_channel'))
+            logger.debug("Connected")
+            verify_sql_tables()
+            # initial config sync
+            update_everything()
+            break
+        except psycopg2.OperationalError:
+            logger.info("Connection timeout, reconnecting in %i seconds..." % CONNECT_RETRY_TIMEOUT)
+            sleep(int(get_conf_item('db_retry_timeout')))
+            continue
+
+
+def cleanup():
+    try:
+        pubsub.unlisten(get_conf_item('notify_channel'))
+        pubsub.close()
+    except:
+        pass
+
+
+def reconnect():
+    cleanup()
+    connect()
+
+
+def verify_db_connect():
+    with pubsub.conn.cursor() as cur:
+        cur.execute("select 1")
+        if cur.fetchone()[0] == 1:
+            return True
+    return False
+
+
+def event_loop():
+    '''
+    Main event loop that waits for notify messages from DB and calls respective notify handler.
+    '''
+    logger.info("Listening for events...")
+    update_countdown = get_conf_item('update_freq')
+    while True:
+        try:
+            for e in pubsub.events(yield_timeouts=True, select_timeout=int(get_conf_item('db_keepalive'))):
+                if e is None:
+                    logger.debug("Checking connection status")
+                    verify_db_connect()
+                    if not update_countdown:
+                        # counter disabled
+                        pass
+                    elif update_countdown == 1:
+                        update_everything()
+                        # reset the counter
+                        update_countdown = get_conf_item('update_freq')
+                    else:
+                        update_countdown-=1
+                else:
+                    logger.debug("Received event channel %s" % e)
+                    # check if the event is supported and call it
+                    if e.payload in callMap.keys():
+                        callMap[e.payload](e.payload)
+                    else:
+                        logger.info("Event type is unknown (%s). Ignoring event." % e.payload)
+
+        except (psycopg2.OperationalError, psycopg2.DatabaseError):
+            logger.info("Database connect error, calling reconnect")
+            # pgbouncer needs some time to restart
+            sleep(1)
+            reconnect()
+            continue
+
+
+# START #
+init_logging()
+read_config_file()
+init_logging()
+init_signals()
+register_call_map()
+connect()
+event_loop()
+
