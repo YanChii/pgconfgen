@@ -6,6 +6,8 @@ import psycopg2
 import psycopg2.extras
 import signal
 import os
+from pwd import getpwnam
+from grp import getgrnam
 from sys import exit
 from time import sleep
 from filecmp import cmp
@@ -114,6 +116,29 @@ def read_config_file():
                     % (config[section]['jinja_template'], section))
             end(2)
 
+        if item_is_in_config('outfile_user', section):
+            try:
+                getpwnam(config[section]['outfile_user']).pw_uid
+            except KeyError:
+                logger.critical("User '%s' does not exist (section '%s')" %
+                        (config[section]['outfile_user'], section))
+                end(2)
+
+        if item_is_in_config('outfile_group', section):
+            try:
+                getgrnam(config[section]['outfile_group']).gr_gid
+            except KeyError:
+                logger.critical("Group '%s' does not exist (section '%s')" %
+                        (config[section]['outfile_group'], section))
+                end(2)
+
+        if item_is_in_config('outfile_mode', section):
+            pattern = re.compile("^([0134567]{3,4})$")
+            if not pattern.match(config[section]['outfile_mode']):
+                logger.critical("Wrong file mode '%s' in section '%s'" %
+                        (config[section]['outfile_group'], section))
+                end(2)
+
 
 def end(exitval):
     cleanup()
@@ -217,6 +242,25 @@ def render_jinja(values, jinjafile):
         end(6)
 
 
+def set_outfile_perms(section):
+    outfile = config[section]['outfile']
+
+    if item_is_in_config('outfile_mode', section):
+        mode = config[section]['outfile_mode']
+        logger.debug("Setting perms '%s' on file '%s'" % (mode, outfile))
+        os.chmod(outfile, int(mode, 8))
+
+    if item_is_in_config('outfile_user', section):
+        user = config[section]['outfile_user']
+        logger.debug("Setting user '%s' on file '%s'" % (user, outfile))
+        os.chown(outfile, getpwnam(user).pw_uid, -1)
+
+    if item_is_in_config('outfile_group', section):
+        group = config[section]['outfile_group']
+        logger.debug("Setting group '%s' on file '%s'" % (group, outfile))
+        os.chown(outfile, -1, getgrnam(group).gr_gid)
+
+
 def template_handler(section):
     '''
     This is the default cfg section handler.
@@ -246,10 +290,11 @@ def template_handler(section):
             f.write(output)
             f.close()
 
-            # if the dst file doesn't exist or differs, write dst
+            # if the dst file differs or doesn't exist, write dst
             if not os.access(outfile, os.F_OK) or not cmp(outfile, tmpfile):
                 logger.info("Writing file %s" % outfile)
                 os.replace(src=tmpfile, dst=outfile)
+                set_outfile_perms(section)
                 call_reload(section)
             else:
                 logger.debug("File %s is up to date" % outfile)
