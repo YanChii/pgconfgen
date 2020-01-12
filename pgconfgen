@@ -31,7 +31,7 @@ DEFAULTCFGVALS['db_keepalive'] = 900
 DEFAULTCFGVALS['update_freq'] = 50  # 900*50 = full update every 12.5 hours
 # throw error if these cfg parameters are missing
 DEFAULTCFGVALS['mandatory_cfg_items_main'] = ['db_connstring', 'notify_channel']
-DEFAULTCFGVALS['mandatory_cfg_items_other'] = ['jinja_template', 'outfile', 'table_name', 'table_cols']
+DEFAULTCFGVALS['mandatory_cfg_items_other'] = ['jinja_template', 'outfile', 'sql_table_name', 'sql_table_cols']
 
 # Read cmd line arguments
 parser = argparse.ArgumentParser()
@@ -277,8 +277,8 @@ def template_handler(section):
 
     try:
         with pubsub.conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor) as cur:
-            # we have already verified table_name and table_cols
-            sql = "select %s from %s" % (config[section]['table_cols'], config[section]['table_name'])
+            # we have already verified sql_table_name and sql_table_cols
+            sql = "select %s from %s" % (config[section]['sql_table_cols'], config[section]['sql_table_name'])
             cur.execute(sql)
 
             values = cur.fetchall()
@@ -306,9 +306,9 @@ def template_handler(section):
         raise
 
 
-def get_db_table_columns(table_name):
+def get_db_table_columns(sql_table_name):
     with pubsub.conn.cursor() as cur:
-        sql = "SELECT column_name FROM information_schema.columns WHERE table_name = '%s'" % table_name
+        sql = "SELECT column_name FROM information_schema.columns WHERE table_name = '%s'" % sql_table_name
         cur.execute(sql)
         col_list = cur.fetchall()
     return [x[0] for x in col_list]     # convert to list
@@ -319,30 +319,30 @@ def verify_sql_tables():
     Check if the tables and column names specified in config file really exist in DB.
     '''
     for section in [x for x in config.sections() if x != 'main']: # all except main section
-        table_name = get_conf_item('table_name', section)
-        table_cols = re.split(r" *, *", get_conf_item('table_cols', section))
-        table_cols = {x for x in table_cols if x}    # deduplicate and remove empty entries
-        #logger.debug("Table name: %s; table_row names: %s" % (table_name, table_cols))
+        sql_table_name = get_conf_item('sql_table_name', section)
+        sql_table_cols = re.split(r" *, *", get_conf_item('sql_table_cols', section))
+        sql_table_cols = {x for x in sql_table_cols if x}    # deduplicate and remove empty entries
+        #logger.debug("Table name: %s; table_row names: %s" % (sql_table_name, sql_table_cols))
 
-        if not table_name:
-            logger.critical("Parameter 'table_name' cannot be empty (section '%s')." % section)
+        if not sql_table_name:
+            logger.critical("Parameter 'sql_table_name' cannot be empty (section '%s')." % section)
             end(3)
-        elif not table_cols:
-            logger.critical("Parameter 'table_cols' cannot be empty (section '%s')." % section)
+        elif not sql_table_cols:
+            logger.critical("Parameter 'sql_table_cols' cannot be empty (section '%s')." % section)
             end(3)
 
-        db_col_list = get_db_table_columns(table_name)
+        db_col_list = get_db_table_columns(sql_table_name)
 
         if not db_col_list:
-            logger.critical("Table '%s' does not exist (section '%s')." % (table_name, section))
+            logger.critical("Table '%s' does not exist (section '%s')." % (sql_table_name, section))
             end(3)
 
-        for col in table_cols:
+        for col in sql_table_cols:
             if col not in db_col_list:
                 logger.info("Discovered table columns: %s" % db_col_list)
                 logger.critical(
                 "Column '%s' does not exist in db table '%s'. Please fix the config section '%s'."
-                % (col, table_name, section))
+                % (col, sql_table_name, section))
                 end(3)
 
 
