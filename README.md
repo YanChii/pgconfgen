@@ -1,7 +1,7 @@
 # pgconfgen
 Wait for db trigger, update local files, call reload, repeat.
 
-This program can keep multiple files up to date according to the defined sql query. The sql query parameters can be specified in the ini file separately for each output file. Moreover, final file is generated using jinja2 templating to give you the most flexibility possible. If the output file has changed, `pgconfgen` can call `reload_command` (defined per output file) to do anything neccessary to apply the change.
+This program can keep multiple files up to date according to the defined SQL query in postgresql. The SQL query parameters can be specified in the ini file separately for each output file. Moreover, the final file is generated using jinja2 templating to give you maximum flexibility. If the output file has changed, `pgconfgen` can call `reload_command` (defined per output file) to do anything neccessary to apply the change.
 
 For more information, see also commented ini file `pgconfgen-sample.ini`.
 
@@ -29,22 +29,22 @@ notify_channel= pdns_notify
 jinja_template = /etc/pgconfgen/forward-zones.conf.j2
 outfile  = /etc/recursor.conf.d/forward-zones.conf
 reload_command = /opt/local/bin/rec_control reload-zones | grep -vq failed
-table_name = domains
-table_cols =name
+sql_table_name = domains
+sql_table_cols =name
 
 [recursor_cfg_modified]
 jinja_template = /etc/pgconfgen/generic.conf.j2
 outfile  = /etc/recursor.conf.d/extra.conf
 reload_command = /usr/local/bin/rec_control reload-zones | grep -vq failed
-table_name = cfg_recursor
-table_cols = key, val
+sql_table_name = cfg_recursor
+sql_table_cols = key, val
 
 [pdns_cfg_modified]
 jinja_template = /etc/pgconfgen/generic.conf.j2
 outfile  = /etc/pdns.conf.d/extra.conf
 reload_command = /usr/local/bin/rec_control reload-zones | grep -vq failed
-table_name = cfg_pdns
-table_cols = key, value
+sql_table_name = cfg_pdns
+sql_table_cols = key, value
 ```
 As you can see, we will not touch the main config files, we will only add auxiliary config file `extra.conf`. That allows us to start with an empty SQL config tables. But make sure you include the extra dir from the main conf files: `include-dir=/etc/recursor.conf.d`.
 
