@@ -51,7 +51,7 @@ def get_conf_item(conf_item, section='main'):
     Returns config value.
     Order of precedense: cmd line args, config file, default value, fail and exit.
     '''
-    if conf_item in cmdline_args and vars(cmdline_args)[conf_item] != None:     # None means that argument was not specified in cmd line
+    if conf_item in cmdline_args and vars(cmdline_args)[conf_item] is not None:     # None means that argument was not specified in cmd line
         return vars(cmdline_args)[conf_item]
     elif config and conf_item in config[section]:
         return config[section][conf_item]
@@ -66,7 +66,7 @@ def item_is_in_config(conf_item, section='main'):
     '''
     Returns true if cfg parameter exists.
     '''
-    if    ((conf_item in cmdline_args and vars(cmdline_args)[conf_item] != None) or
+    if    ((conf_item in cmdline_args and vars(cmdline_args)[conf_item] is not None) or
             conf_item in config[section] or
             conf_item in DEFAULTCFGVALS):
         return True
@@ -238,7 +238,7 @@ def render_jinja(values, jinjafile):
         logger.critical('Syntax error in jinja template file %s on line %s: %s' %(jinjafile, te.lineno, str(te)))
         end(6)
     except jinja2.exceptions.TemplateError as te:
-        logger.critical('Jinja template render error in file %s: ' % (jinjafile, str(te)))
+        logger.critical('Jinja template render error in file %s (%s): ' % (jinjafile, str(te)))
         end(6)
 
 
