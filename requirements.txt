@@ -1,4 +1,4 @@
-psycopg2
-pgnotify
-pubsub
-jinja2
+psycopg2==2.8.4
+pgnotify==0.1.1561372201
+pgpubsub==0.0.5
+Jinja2==2.11.1

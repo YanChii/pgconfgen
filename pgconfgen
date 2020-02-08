@@ -79,10 +79,10 @@ def verify_cfg_parameter(param, section):
     Throw critical error if mandatory cfg parameter is missing.
     '''
     if param not in config[section]:
-        logger.critical("Config file error. Item '%s' not found in (section '%s')." % (item, section))
+        logger.critical("Config file error. Parameter '%s' not found in (section '%s')." % (item, section))
         end(5)
     elif not config[section][param]:
-        logger.critical("Config file error. Item '%s' cannot be empty (section '%s')." % (item, section))
+        logger.critical("Config file error. Parameter '%s' cannot be empty (section '%s')." % (item, section))
         end(5)
 
 
@@ -217,7 +217,7 @@ def call_reload(section):
         logger.debug("Calling reload command: %s" % reload_command)
         check_call(reload_command, shell=True)
     except CalledProcessError as e:
-        logger.warning("Reload command failed: %s" % reload_command)
+        logger.warning("Reload command failed: %s (Error: %s)" % (reload_command, str(e)))
 
 def render_jinja(values, jinjafile):
     '''
@@ -389,7 +389,7 @@ def connect():
             update_everything()
             break
         except psycopg2.OperationalError:
-            logger.info("Connection timeout, reconnecting in %i seconds..." % CONNECT_RETRY_TIMEOUT)
+            logger.info("Connection timeout, reconnecting in %i seconds..." % get_conf_item('db_retry_timeout'))
             sleep(int(get_conf_item('db_retry_timeout')))
             continue
 
