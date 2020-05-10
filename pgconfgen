@@ -143,6 +143,12 @@ def read_config_file():
 def end(exitval):
     cleanup()
     logger.info("Exiting...")
+    if exitval != 0 and item_is_in_config("exit_delay"):
+        # if exit delay was defined, sleep for defined time
+        try:
+            sleep(int(get_conf_item("exit_delay")))
+        except:
+            pass
     exit(exitval)
 
 
