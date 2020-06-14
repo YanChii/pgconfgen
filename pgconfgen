@@ -386,7 +386,7 @@ def update_everything():
 
 def connect():
     """
-    Handle db connect and call force update of everything if successfull.
+    Handle db connect and call force update of everything if successful.
     """
     global pubsub
     logger.info("Connecting to DB")
@@ -402,8 +402,9 @@ def connect():
             update_everything()
             break
         except psycopg2.OperationalError:
-            logger.info("Connection timeout, reconnecting in %i seconds..." % get_conf_item('db_retry_timeout'))
-            sleep(int(get_conf_item('db_retry_timeout')))
+            reconnect_timeout = int(get_conf_item('db_retry_timeout'))
+            logger.info("Connection timeout, reconnecting in %i seconds..." % reconnect_timeout)
+            sleep(reconnect_timeout)
             continue
 
 
