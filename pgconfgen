@@ -11,7 +11,7 @@ from grp import getgrnam
 from sys import exit
 from time import sleep
 from filecmp import cmp
-from subprocess import check_call,CalledProcessError
+from subprocess import check_call, CalledProcessError
 import logging
 import argparse
 import configparser
@@ -35,38 +35,42 @@ DEFAULTCFGVALS['mandatory_cfg_items_other'] = ['jinja_template', 'outfile', 'sql
 
 # Read cmd line arguments
 parser = argparse.ArgumentParser()
-parser.add_argument('-c', '--config', help='program configuration file (default: ' + DEFAULTCFGVALS['config'] + ')', required=False, default=DEFAULTCFGVALS['config'])
+parser.add_argument('-c', '--config', help='program configuration file (default: ' + DEFAULTCFGVALS['config'] + ')',
+                    required=False, default=DEFAULTCFGVALS['config'])
 parser.add_argument('-d', '--debug', help="increase output verbosity", action="store_true")
 cmdline_args = parser.parse_args()
 
 # Global variables
-pubsub = None      # notify handler
-config = {}        # parsed file configuration
-logger = logging.getLogger(DEFAULTCFGVALS['app_name']) # log handler
+pubsub = None  # notify handler
+config = {}  # parsed file configuration
+logger = logging.getLogger(DEFAULTCFGVALS['app_name'])  # log handler
 callMap = {}
 
 
 def get_conf_item(conf_item, section='main'):
-    '''
+    """
     Returns config value.
-    Order of precedense: cmd line args, config file, default value, fail and exit.
-    '''
-    if conf_item in cmdline_args and vars(cmdline_args)[conf_item] is not None:     # None means that argument was not specified in cmd line
+    Order of precedence: cmd line args, config file, default value, fail and exit.
+    """
+    # None means that argument was not specified in cmd line
+    if conf_item in cmdline_args and vars(cmdline_args)[conf_item] is not None:
         return vars(cmdline_args)[conf_item]
     elif config and conf_item in config[section]:
         return config[section][conf_item]
     elif conf_item in DEFAULTCFGVALS:
         return DEFAULTCFGVALS[conf_item]
     else:
-        logger.critical('Config value "%s" not specified in file %s or in commandline (and no default value available).' % (conf_item, get_conf_item('config')))
+        logger.critical(
+            'Config value "%s" not specified in file %s or in commandline (and no default value available).' % (
+                conf_item, get_conf_item('config')))
         end(4)
 
 
 def item_is_in_config(conf_item, section='main'):
-    '''
+    """
     Returns true if cfg parameter exists.
-    '''
-    if    ((conf_item in cmdline_args and vars(cmdline_args)[conf_item] is not None) or
+    """
+    if ((conf_item in cmdline_args and vars(cmdline_args)[conf_item] is not None) or
             conf_item in config[section] or
             conf_item in DEFAULTCFGVALS):
         return True
@@ -75,21 +79,21 @@ def item_is_in_config(conf_item, section='main'):
 
 
 def verify_cfg_parameter(param, section):
-    '''
+    """
     Throw critical error if mandatory cfg parameter is missing.
-    '''
+    """
     if param not in config[section]:
-        logger.critical("Config file error. Parameter '%s' not found in (section '%s')." % (item, section))
+        logger.critical("Config file error. Parameter '%s' not found in (section '%s')." % (param, section))
         end(5)
     elif not config[section][param]:
-        logger.critical("Config file error. Parameter '%s' cannot be empty (section '%s')." % (item, section))
+        logger.critical("Config file error. Parameter '%s' cannot be empty (section '%s')." % (param, section))
         end(5)
 
 
 def read_config_file():
-    '''
+    """
     Reads cfg file and checks for consistency.
-    '''
+    """
     global config
 
     if not os.access(cmdline_args.config, os.R_OK):
@@ -98,22 +102,22 @@ def read_config_file():
 
     config = configparser.ConfigParser()
     config.read(cmdline_args.config)
-    
+
     # check for required items in main section
     for item in DEFAULTCFGVALS['mandatory_cfg_items_main']:
         verify_cfg_parameter(item, 'main')
 
     # check for required items in all sections
-    cfgsections = config.sections()
-    cfgsections.remove('main')         # don't look into main section
-    for section in cfgsections:
+    cfg_sections = config.sections()
+    cfg_sections.remove('main')  # don't look into main section
+    for section in cfg_sections:
         for item in DEFAULTCFGVALS['mandatory_cfg_items_other']:
             verify_cfg_parameter(item, section)
 
         # check if jinja template file is present
         if not os.access(config[section]['jinja_template'], os.R_OK):
-            logger.critical("Jinja template file '%s' does not exist (section '%s')." 
-                    % (config[section]['jinja_template'], section))
+            logger.critical("Jinja template file '%s' does not exist (section '%s')."
+                            % (config[section]['jinja_template'], section))
             end(2)
 
         if item_is_in_config('outfile_user', section):
@@ -121,7 +125,7 @@ def read_config_file():
                 getpwnam(config[section]['outfile_user']).pw_uid
             except KeyError:
                 logger.critical("User '%s' does not exist (section '%s')" %
-                        (config[section]['outfile_user'], section))
+                                (config[section]['outfile_user'], section))
                 end(2)
 
         if item_is_in_config('outfile_group', section):
@@ -129,33 +133,33 @@ def read_config_file():
                 getgrnam(config[section]['outfile_group']).gr_gid
             except KeyError:
                 logger.critical("Group '%s' does not exist (section '%s')" %
-                        (config[section]['outfile_group'], section))
+                                (config[section]['outfile_group'], section))
                 end(2)
 
         if item_is_in_config('outfile_mode', section):
             pattern = re.compile("^([0134567]{3,4})$")
             if not pattern.match(config[section]['outfile_mode']):
                 logger.critical("Wrong file mode '%s' in section '%s'" %
-                        (config[section]['outfile_group'], section))
+                                (config[section]['outfile_group'], section))
                 end(2)
 
 
-def end(exitval):
+def end(exit_val):
     cleanup()
     logger.info("Exiting...")
-    if exitval != 0 and item_is_in_config("exit_delay"):
+    if exit_val != 0 and item_is_in_config("exit_delay"):
         # if exit delay was defined, sleep for defined time
         try:
             sleep(int(get_conf_item("exit_delay")))
         except:
             pass
-    exit(exitval)
+    exit(exit_val)
 
 
 def init_logging():
     global logger
     logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S %p')
-    #logging.basicConfig(format='%(message)s')
+    # logging.basicConfig(format='%(message)s')
     logger = logging.getLogger(get_conf_item('app_name'))
     # argparse -d is the only way how to turn on debug because cfg file was not yet parsed
     if get_conf_item('debug'):
@@ -165,15 +169,16 @@ def init_logging():
 
 
 def init_signals():
-    '''
+    """
     UNIX signal handling.
     - Ctrl+c calls cleanup
     - SIGUSR1 calls reload config file and update_everything()
-    '''
+    """
 
-    def ctrl_c(signal, frame):
+    def ctrl_c(sig, frame):
         logger.info('Interrupt received.')
         end(0)
+
     signal.signal(signal.SIGINT, ctrl_c)
     signal.signal(signal.SIGTERM, ctrl_c)
 
@@ -182,37 +187,39 @@ def init_signals():
         logger.info('SIGUSR1 received. Forcing reload of everything.')
         read_config_file()
         update_everything()
+
     signal.signal(signal.SIGUSR1, run_update_conf)
 
 
 def register_notify_handler(section_name):
-    '''
+    """
     Decorator function to register handler function for a config section.
 
-    Usage: 
+    Usage:
     @register_notify_handler('section_name')
     def the_function():
        ...
 
     Or directly by calling:
     register_notify_handler('section_name')(the_function)
-    
+
     Parameter section_name is the string that identifies which notify to handle.
 
     Using this decorator you can implement your own additional notify handlers
     that don't need to be defined in the config file.
-    '''
+    """
 
     def decorator_register_notify_handler(func):
         callMap[section_name] = func
         logger.debug("Registering handler for section '%s'" % section_name)
+
     return decorator_register_notify_handler
 
 
 def call_reload(section):
-    '''
+    """
     Calls a reload command (if) defined for specified cfg section.
-    '''
+    """
     if 'reload_command' not in config[section] or not config[section]['reload_command']:
         # nothing to reload
         logger.debug("Reload command is not defined for section '%s'." % section)
@@ -225,11 +232,12 @@ def call_reload(section):
     except CalledProcessError as e:
         logger.warning("Reload command failed: %s (Error: %s)" % (reload_command, str(e)))
 
+
 def render_jinja(values, jinjafile):
-    '''
+    """
     Takes dict of values and a path to j2 file.
     Returns rendered string.
-    '''
+    """
     try:
         with open(jinjafile, 'r') as f:
             templatext = f.read()
@@ -241,7 +249,7 @@ def render_jinja(values, jinjafile):
         logger.critical("Cannot open template file %s (%s)" % (jinjafile, str(e)))
         end(6)
     except jinja2.exceptions.TemplateSyntaxError as te:
-        logger.critical('Syntax error in jinja template file %s on line %s: %s' %(jinjafile, te.lineno, str(te)))
+        logger.critical('Syntax error in jinja template file %s on line %s: %s' % (jinjafile, te.lineno, str(te)))
         end(6)
     except jinja2.exceptions.TemplateError as te:
         logger.critical('Jinja template render error in file %s (%s): ' % (jinjafile, str(te)))
@@ -268,47 +276,47 @@ def set_outfile_perms(section):
 
 
 def template_handler(section):
-    '''
+    """
     This is the default cfg section handler.
     Makes sql query according to cfg and inserts the results into a jinja templating.
     Compares the result with the destination file and replaces if necessary.
     Call reload command if output file has changed.
-    '''
+    """
     outfile = config[section]['outfile']
-    tmpfile = outfile + '.tmp.' + str(os.getpid())
-    jinjafile = config[section]['jinja_template']
+    tmp_file = outfile + '.tmp.' + str(os.getpid())
+    jinja_file = config[section]['jinja_template']
 
     # raise error if conf directory does not exist
     os.stat(os.path.dirname(outfile))
 
     try:
-        with pubsub.conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor) as cur:
+        with pubsub.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # we have already verified sql_table_name and sql_table_cols
             sql = "select %s from %s" % (config[section]['sql_table_cols'], config[section]['sql_table_name'])
             cur.execute(sql)
 
             values = cur.fetchall()
-            #logger.debug("SQL out: %s" % values)
-            output = render_jinja(values, jinjafile)
+            # logger.debug("SQL out: %s" % values)
+            output = render_jinja(values, jinja_file)
 
-            logger.debug("Writing temp file %s" % tmpfile)
-            f = open(tmpfile, 'w')
+            logger.debug("Writing temp file %s" % tmp_file)
+            f = open(tmp_file, 'w')
             f.write(output)
             f.close()
 
             # if the dst file differs or doesn't exist, write dst
-            if not os.access(outfile, os.F_OK) or not cmp(outfile, tmpfile):
+            if not os.access(outfile, os.F_OK) or not cmp(outfile, tmp_file):
                 logger.info("Writing file %s" % outfile)
-                os.replace(src=tmpfile, dst=outfile)
+                os.replace(src=tmp_file, dst=outfile)
                 set_outfile_perms(section)
                 call_reload(section)
             else:
                 logger.debug("File %s is up to date" % outfile)
-                os.remove(tmpfile)
-    except:
-        if os.access(tmpfile, os.W_OK):
-            logger.debug("debug: Removing temp file %s" % tmpfile)
-            os.remove(tmpfile)
+                os.remove(tmp_file)
+    except Exception:
+        if os.access(tmp_file, os.W_OK):
+            logger.debug("debug: Removing temp file %s" % tmp_file)
+            os.remove(tmp_file)
         raise
 
 
@@ -317,18 +325,18 @@ def get_db_table_columns(sql_table_name):
         sql = "SELECT column_name FROM information_schema.columns WHERE table_name = '%s'" % sql_table_name
         cur.execute(sql)
         col_list = cur.fetchall()
-    return [x[0] for x in col_list]     # convert to list
+    return [x[0] for x in col_list]  # convert to list
 
 
 def verify_sql_tables():
-    '''
+    """
     Check if the tables and column names specified in config file really exist in DB.
-    '''
-    for section in [x for x in config.sections() if x != 'main']: # all except main section
+    """
+    for section in [x for x in config.sections() if x != 'main']:  # all except main section
         sql_table_name = get_conf_item('sql_table_name', section)
         sql_table_cols = re.split(r" *, *", get_conf_item('sql_table_cols', section))
-        sql_table_cols = {x for x in sql_table_cols if x}    # deduplicate and remove empty entries
-        #logger.debug("Table name: %s; table_row names: %s" % (sql_table_name, sql_table_cols))
+        sql_table_cols = {x for x in sql_table_cols if x}  # deduplicate and remove empty entries
+        # logger.debug("Table name: %s; table_row names: %s" % (sql_table_name, sql_table_cols))
 
         if not sql_table_name:
             logger.critical("Parameter 'sql_table_name' cannot be empty (section '%s')." % section)
@@ -347,30 +355,29 @@ def verify_sql_tables():
             if col not in db_col_list:
                 logger.info("Discovered table columns: %s" % db_col_list)
                 logger.critical(
-                "Column '%s' does not exist in db table '%s'. Please fix the config section '%s'."
-                % (col, sql_table_name, section))
+                    "Column '%s' does not exist in db table '%s'. Please fix the config section '%s'."
+                    % (col, sql_table_name, section))
                 end(3)
 
 
-
 def register_call_map():
-    '''
+    """
     Registers a handler for each cfg file section.
-    '''
+    """
     global callMap
 
-    for section in [x for x in config.sections() if x != 'main']: # all except main section
+    for section in [x for x in config.sections() if x != 'main']:  # all except main section
         register_notify_handler(section)(template_handler)
-        #callMap[section] = template_handler
+        # callMap[section] = template_handler
 
     logger.debug("Event channel name is '%s'" % get_conf_item('notify_channel'))
     return
 
 
 def update_everything():
-    '''
+    """
     Call a handler for every cfg file section. Force update of everything.
-    '''
+    """
     for section in callMap:
         # run all registered handlers
         logger.debug("Running handler '%s'" % section)
@@ -378,9 +385,9 @@ def update_everything():
 
 
 def connect():
-    '''
+    """
     Handle db connect and call force update of everything if successfull.
-    '''
+    """
     global pubsub
     logger.info("Connecting to DB")
     while True:
@@ -404,7 +411,7 @@ def cleanup():
     try:
         pubsub.unlisten(get_conf_item('notify_channel'))
         pubsub.close()
-    except:
+    except Exception:
         pass
 
 
@@ -422,9 +429,9 @@ def verify_db_connect():
 
 
 def event_loop():
-    '''
+    """
     Main event loop that waits for notify messages from DB and calls respective notify handler.
-    '''
+    """
     logger.info("Listening for events...")
     update_countdown = get_conf_item('update_freq')
     while True:
@@ -441,7 +448,7 @@ def event_loop():
                         # reset the counter
                         update_countdown = get_conf_item('update_freq')
                     else:
-                        update_countdown-=1
+                        update_countdown -= 1
                 else:
                     logger.debug("Received event channel %s" % e)
                     # check if the event is supported and call it
@@ -466,4 +473,3 @@ init_signals()
 register_call_map()
 connect()
 event_loop()
-
